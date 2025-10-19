@@ -242,30 +242,137 @@ Focus on visuals, motion, color, and emotion. Keep it concise, vivid, and imagin
 
 
 def generate_with_higgsfield(prompt: str, image_url: str):
-    """Generate video using Higgsfield."""
-    headers = {"Authorization": f"Bearer {HIGGSFIELD_API_KEY}", "Content-Type": "application/json"}
-    data = {"prompt": prompt}
-    if image_url:
-        data["image_url"] = image_url
+    """Generate video using Higgsfield with correct headers and payload."""
+    
+    HIGGSFIELD_API_SECRET = os.getenv("HIGGSFIELD_API_SECRET")
+    
+    if not HIGGSFIELD_API_KEY or not HIGGSFIELD_API_SECRET:
+        return {"error": "HIGGSFIELD_API_KEY or HIGGSFIELD_API_SECRET not configured"}
 
     try:
-        resp = requests.post("https://api.higgsfield.ai/v1/video", headers=headers, json=data)
+        print(f"Submitting to Higgsfield: {prompt[:100]}...")
+        
+        # CORRECT HEADERS - must use hf-api-key and hf-secret
+        headers = {
+            "hf-api-key": HIGGSFIELD_API_KEY,
+            "hf-secret": HIGGSFIELD_API_SECRET,
+            "Content-Type": "application/json"
+        }
+        
+        print(f"API Key set: {bool(HIGGSFIELD_API_KEY)}")
+        print(f"API Secret set: {bool(HIGGSFIELD_API_SECRET)}")
+        print(f"Headers being sent: {headers}")
+        
+        # CORRECT PAYLOAD STRUCTURE - params wrapper required
+        data = {
+            "params": {
+                "prompt": prompt,
+                "duration": 6,
+                "resolution": "768",
+                "enable_prompt_optimizer": True
+            }
+        }
+        
+        if image_url:
+            data["params"]["image_url"] = image_url
+        
+        print(f"Payload: {data}")
+        
+        endpoint = "https://platform.higgsfield.ai/generate/minimax-t2v"
+        print(f"Endpoint: {endpoint}")
+        
+        resp = requests.post(endpoint, headers=headers, json=data, timeout=60)
+        
+        print(f"Response status: {resp.status_code}")
+        print(f"Response: {resp.text[:1000]}")
+        
+        if resp.status_code not in [200, 201]:
+            return {"error": f"Higgsfield API error: {resp.status_code} - {resp.text}"}
+        
         try:
-            return resp.json()
+            result = resp.json()
         except:
-            print("Raw Higgsfield response:", resp.text)
-            return {"error": resp.text}
+            return {"error": f"Invalid response format: {resp.text[:200]}"}
+        
+        if "error" in result or "detail" in result:
+            return {"error": f"Higgsfield error: {result}"}
+        
+        # Get request ID from response
+        request_id = result.get("id") or result.get("request_id") or result.get("uuid")
+        if not request_id:
+            print(f"No ID in response: {result}")
+            return {"error": f"No request ID in response: {result}"}
+        
+        print(f"Generation started with ID: {request_id}")
+        
+        # Poll for completion
+        max_polls = 120
+        poll_interval = 5
+        
+        for poll_count in range(max_polls):
+            try:
+                status_endpoint = f"https://platform.higgsfield.ai/generate/minimax-t2v/{request_id}"
+                status_resp = requests.get(status_endpoint, headers=headers, timeout=30)
+                
+                print(f"Poll {poll_count + 1}: {status_resp.status_code}")
+                
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    status = status_data.get("status")
+                    
+                    print(f"Status: {status}")
+                    
+                    if status in ["completed", "success"]:
+                        video_url = (
+                            status_data.get("video_url") or 
+                            status_data.get("url") or 
+                            status_data.get("result", {}).get("video_url") or
+                            status_data.get("data", {}).get("video_url")
+                        )
+                        
+                        if video_url:
+                            print(f"Video ready: {video_url}")
+                            return {"video_url": video_url, "status": "success"}
+                        else:
+                            print(f"Completed but no URL: {status_data}")
+                            return {"error": f"No video URL in response: {status_data}"}
+                    
+                    elif status in ["failed", "error"]:
+                        return {"error": f"Generation failed: {status_data.get('error')}"}
+                    
+                    elif status in ["pending", "processing", "queued"]:
+                        time.sleep(poll_interval)
+                        continue
+                    else:
+                        time.sleep(poll_interval)
+                        continue
+                
+                elif status_resp.status_code == 404:
+                    time.sleep(poll_interval)
+                    continue
+                else:
+                    print(f"Poll error: {status_resp.status_code}")
+                    time.sleep(poll_interval)
+                    continue
+                    
+            except Exception as e:
+                print(f"Poll exception: {e}")
+                time.sleep(poll_interval)
+                continue
+        
+        return {"error": "Generation timeout"}
+    
     except Exception as e:
-        return {"error": f"Higgsfield API error: {e}"}
-
-
-# ------------------- MAIN PIPELINE ROUTE -------------------
+        print(f"Exception: {str(e)}")
+        return {"error": f"Higgsfield API error: {str(e)}"}
 @app.post("/process_ai/")
 async def process_ai(video: UploadFile, image: UploadFile, text: str = Form(...)):
     """Main pipeline: upload -> describe -> generate prompt -> video."""
     try:
         # 1️⃣ Upload video and image
         video_url, image_url = upload_to_cloudinary(video, image)
+        print(f"Uploaded video: {video_url}")
+        print(f"Uploaded image: {image_url}")
 
         # 2️⃣ Create TwelveLabs index
         index_id = create_index_if_needed()
@@ -282,12 +389,16 @@ async def process_ai(video: UploadFile, image: UploadFile, text: str = Form(...)
             }
 
         description = analysis.get("description", "No description available")
+        print(f"Video description: {description}")
 
         # 4️⃣ Generate GPT prompt
         gpt_prompt = generate_prompt_with_gpt(description, text)
+        print(f"Generated prompt: {gpt_prompt[:100]}...")
 
         # 5️⃣ Generate with Higgsfield
+        print("Starting Higgsfield video generation...")
         gen_result = generate_with_higgsfield(gpt_prompt, image_url)
+        
         if "error" in gen_result:
             return {
                 "status": "partial_success",
@@ -296,7 +407,7 @@ async def process_ai(video: UploadFile, image: UploadFile, text: str = Form(...)
                 "image_used": image_url,
                 "description": description,
                 "final_prompt": gpt_prompt,
-                "generated_video": "Generation failed"
+                "generated_video": None
             }
 
         # 6️⃣ Success
@@ -306,8 +417,9 @@ async def process_ai(video: UploadFile, image: UploadFile, text: str = Form(...)
             "image_used": image_url,
             "description": description,
             "final_prompt": gpt_prompt,
-            "generated_video": gen_result.get("video_url", "Pending...")
+            "generated_video": gen_result.get("video_url")
         }
 
     except Exception as e:
+        print(f"Pipeline error: {str(e)}")
         return {"status": "error", "message": str(e)}
