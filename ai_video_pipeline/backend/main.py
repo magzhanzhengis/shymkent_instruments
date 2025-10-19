@@ -211,7 +211,7 @@ def generate_prompt_with_gpt(video_description: str, user_text: str):
         return "OpenAI API key not configured."
 
     prompt_text = f"""
-You are a creative AI prompt engineer. Using the following video description and user idea,
+You are a creative AI prompt engineer. Using the following video description and user's thing,
 generate a short, cinematic and vivid text prompt for AI video generation.
 
 User idea: {user_text}
@@ -219,7 +219,7 @@ User idea: {user_text}
 Video description:
 {video_description}
 
-Write a single detailed prompt that describes what should visually appear in the AI-generated video.
+Write a single detailed prompt that replaces the thing in the video with the user's thing. Call the user's thing as the thing in the image, image's thing. You know what thing is given to you in the description, you just have to replace that word with the user's thing's image.
 Focus on visuals, motion, color, and emotion. Keep it concise, vivid, and imaginative.
 """
 
@@ -297,61 +297,108 @@ def generate_with_higgsfield(prompt: str, image_url: str):
         if "error" in result or "detail" in result:
             return {"error": f"Higgsfield error: {result}"}
         
-        # Get request ID from response
-        request_id = result.get("id") or result.get("request_id") or result.get("uuid")
-        if not request_id:
-            print(f"No ID in response: {result}")
-            return {"error": f"No request ID in response: {result}"}
+        # Get job_set_id from response - this is what we poll
+        job_set_id = result.get("job_set_id") or result.get("id") or result.get("uuid")
+        if not job_set_id:
+            print(f"Full response to debug: {result}")
+            # Sometimes the ID might be nested or named differently
+            if isinstance(result, dict):
+                # Try to find any ID-like field
+                for key, value in result.items():
+                    if "id" in key.lower() and isinstance(value, str):
+                        job_set_id = value
+                        print(f"Found ID in field '{key}': {value}")
+                        break
         
-        print(f"Generation started with ID: {request_id}")
+        if not job_set_id:
+            print(f"No job_set_id in response: {result}")
+            return {"error": f"No job_set_id in response: {result}"}
         
-        # Poll for completion
-        max_polls = 120
+        print(f"Generation started with job_set_id: {job_set_id}")
+        
+        # Poll for completion and get the video URL
+        max_polls = 240  # 20 minutes with 5 second intervals
         poll_interval = 5
         
         for poll_count in range(max_polls):
             try:
-                status_endpoint = f"https://platform.higgsfield.ai/generate/minimax-t2v/{request_id}"
+                # Poll the job status
+                status_endpoint = f"https://platform.higgsfield.ai/v1/job-sets/{job_set_id}"
                 status_resp = requests.get(status_endpoint, headers=headers, timeout=30)
                 
                 print(f"Poll {poll_count + 1}: {status_resp.status_code}")
                 
                 if status_resp.status_code == 200:
                     status_data = status_resp.json()
-                    status = status_data.get("status")
+                    print(f"Status: {status_data}")
                     
-                    print(f"Status: {status}")
-                    
-                    if status in ["completed", "success"]:
-                        video_url = (
-                            status_data.get("video_url") or 
-                            status_data.get("url") or 
-                            status_data.get("result", {}).get("video_url") or
-                            status_data.get("data", {}).get("video_url")
-                        )
+                    # Check if job is complete
+                    if status_data.get("is_final") or status_data.get("status") in ["completed", "success"]:
+                        # Extract video URL from response
+                        video_url = None
+                        
+                        # Try different possible locations for the URL
+                        if "jobs" in status_data and len(status_data["jobs"]) > 0:
+                            job = status_data["jobs"][0]
+                            video_url = job.get("result_url") or job.get("video_url") or job.get("url")
+                        
+                        if not video_url:
+                            video_url = (
+                                status_data.get("video_url") or 
+                                status_data.get("result_url") or
+                                status_data.get("url")
+                            )
                         
                         if video_url:
-                            print(f"Video ready: {video_url}")
-                            return {"video_url": video_url, "status": "success"}
+                            print(f"Video URL found: {video_url}")
+                            
+                            # Download the video from Higgsfield
+                            print(f"Downloading video from Higgsfield...")
+                            video_resp = requests.get(video_url, timeout=60)
+                            
+                            if video_resp.status_code == 200:
+                                # Upload to Cloudinary
+                                print(f"Uploading video to Cloudinary...")
+                                from io import BytesIO
+                                video_file = BytesIO(video_resp.content)
+                                
+                                cloudinary_result = cloudinary.uploader.upload(
+                                    video_file,
+                                    resource_type="video",
+                                    folder="generated_videos"
+                                )
+                                
+                                cloudinary_url = cloudinary_result["secure_url"]
+                                print(f"Video uploaded to Cloudinary: {cloudinary_url}")
+                                
+                                return {
+                                    "video_url": cloudinary_url,
+                                    "status": "success",
+                                    "message": "Video generated and uploaded successfully"
+                                }
+                            else:
+                                print(f"Failed to download video: {video_resp.status_code}")
+                                return {"error": f"Failed to download video from Higgsfield"}
                         else:
-                            print(f"Completed but no URL: {status_data}")
-                            return {"error": f"No video URL in response: {status_data}"}
+                            print(f"Job completed but no video URL found in response: {status_data}")
+                            return {"error": f"Video generated but URL not found in response"}
                     
-                    elif status in ["failed", "error"]:
-                        return {"error": f"Generation failed: {status_data.get('error')}"}
+                    elif status_data.get("status") in ["failed", "error"]:
+                        error_msg = status_data.get("error_message") or status_data.get("error")
+                        return {"error": f"Video generation failed: {error_msg}"}
                     
-                    elif status in ["pending", "processing", "queued"]:
-                        time.sleep(poll_interval)
-                        continue
                     else:
+                        print(f"Still processing, status: {status_data.get('status')}")
                         time.sleep(poll_interval)
                         continue
                 
                 elif status_resp.status_code == 404:
+                    print(f"Job not found yet, retrying...")
                     time.sleep(poll_interval)
                     continue
+                
                 else:
-                    print(f"Poll error: {status_resp.status_code}")
+                    print(f"Unexpected status code: {status_resp.status_code}")
                     time.sleep(poll_interval)
                     continue
                     
@@ -360,7 +407,7 @@ def generate_with_higgsfield(prompt: str, image_url: str):
                 time.sleep(poll_interval)
                 continue
         
-        return {"error": "Generation timeout"}
+        return {"error": "Video generation timeout - please check Higgsfield dashboard"}
     
     except Exception as e:
         print(f"Exception: {str(e)}")
