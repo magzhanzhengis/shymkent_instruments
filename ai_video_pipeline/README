@@ -1,0 +1,136 @@
+```markdown
+# 🌅 Zharnamai — AI Video Generation Pipeline
+
+**Zharnamai** is a full-stack AI video pipeline that combines:
+- 🎥 **TwelveLabs** — for intelligent video analysis (description extraction)
+- 🧠 **OpenAI GPT** — for creative text-to-video prompt generation
+- 🌈 **Higgsfield** — for final video synthesis
+- ☁️ **Cloudinary** — for media upload and hosting
+- ⚡ **FastAPI (Python)** backend
+- 💻 **Next.js + TailwindCSS** frontend (modern minimal UI)
+
+---
+
+## 🚀 Project Overview
+
+Zharnamai allows users to:
+1. Upload a **video** and a **reference image**  
+2. Enter a **creative idea or text prompt**  
+3. Automatically generate:
+   - A video description via **TwelveLabs**
+   - A creative text-to-video prompt via **OpenAI**
+   - A generated AI video via **Higgsfield**
+
+---
+
+## 🧩 Architecture
+
+```
+
+Frontend (Next.js) → FastAPI Backend → TwelveLabs → OpenAI → Higgsfield → Cloudinary
+
+````
+
+- **Frontend:** Minimalist UI for upload and interaction  
+- **Backend:** Handles API orchestration and response parsing  
+- **TwelveLabs:** Extracts key events / descriptions from the uploaded video  
+- **OpenAI GPT:** Turns that description + user idea into a detailed cinematic prompt  
+- **Higgsfield:** Uses the prompt to synthesize a new video  
+- **Cloudinary:** Stores all uploaded media files  
+
+---
+
+## 🛠️ Setup Guide
+
+### 1️⃣ Clone the project
+```bash
+git clone https://github.com/magzhanzhengis/shymkent_instruments.git
+cd zharnamai
+````
+
+### 2️⃣ Backend setup
+
+```bash
+cd backend
+python -m venv venv
+source venv/Scripts/activate   # on Windows
+pip install -r requirements.txt
+```
+
+Create a `.env` file:
+
+```
+CLOUD_NAME=your_cloudinary_name
+API_KEY=your_cloudinary_api_key
+API_SECRET=your_cloudinary_api_secret
+
+TWELVELABS_API_KEY=your_twelvelabs_api_key
+TWELVELABS_INDEX_ID=auto
+
+OPENAI_API_KEY=your_openai_api_key
+HIGGSFIELD_API_KEY=your_higgsfield_api_key
+```
+
+Run the backend:
+
+```bash
+uvicorn main:app --reload --port 8001
+```
+
+
+Access UI → [http://localhost:3000]
+
+---
+
+## ⚡ Usage
+
+1. Open the Zharnamai UI
+2. Upload a video and image
+3. Enter your creative idea (example: *"A cinematic sunrise over Almaty mountains"*)
+4. Click **Generate AI Video 🎥**
+
+The backend will:
+
+1. Upload both files to Cloudinary
+2. Create or reuse a TwelveLabs index
+3. Send video for analysis → retrieve a **description**
+4. Send that description + idea to OpenAI → generate a **text prompt**
+5. Send that prompt to Higgsfield → generate the final **AI video**
+
+---
+
+All the generated videos will be on higgsfield website
+
+## 🪄 Design Philosophy
+
+Zharnamai (Жарнамай) blends:
+
+* ⚡ **Speed** — FastAPI + Next.js
+* 🧠 **Creativity** — OpenAI-driven text imagination
+* 🌅 **Emotion** — Vibrant, warm UI colors
+* 💎 **Simplicity** — One-page upload & result flow
+
+---
+
+## 🧾 License
+
+MIT License © 2025 Zharnamai Project
+
+---
+
+## 👨‍💻 Authors
+
+* **Magzhan Zhenis** — Electrical & Computer Engineer
+* FastAPI backend developer, frontend integration, AI orchestration
+
+---
+
+## ❤️ Acknowledgements
+
+* [TwelveLabs API](https://www.twelvelabs.io/)
+* [OpenAI](https://platform.openai.com/)
+* [Higgsfield](https://platform.higgsfield.ai/)
+* [Cloudinary](https://cloudinary.com/)
+* [Next.js](https://nextjs.org/)
+* [FastAPI](https://fastapi.tiangolo.com/)
+
